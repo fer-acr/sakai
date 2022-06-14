@@ -34,6 +34,7 @@ import java.util.Set;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 import javax.faces.component.html.HtmlSelectOneMenu;
 import javax.faces.context.FacesContext;
@@ -1554,46 +1555,30 @@ public class HistogramListener
 							.toString((int) (((double) correctresponses / (double) qbean.getNumResponses()) * 100)));
 	}
 
-  private void getTFMCScores(Map publishedAnswerHash, List scores, HistogramQuestionScoresBean qbean, List answers) {
-		Map texts = new HashMap();
-		Map results = new HashMap();
-		Map sequenceMap = new HashMap();
+  private void getTFMCScores(Map<Long, AnswerIfc> publishedAnswerHash, List<ItemGradingData> scores, HistogramQuestionScoresBean qbean, List<AnswerIfc> answers) {
+		Map<Long, AnswerIfc> texts = new HashMap<>();
+		Map<Long, Integer> results = new HashMap<>();
+		Map<Long, Long> sequenceMap = new HashMap<>();
 
 		if (answers != null) {
-			Iterator iter = answers.iterator();
-		
 			// create the lookup maps
-			while (iter.hasNext()) {
-				AnswerIfc answer = (AnswerIfc) iter.next();
+			for (AnswerIfc answer: answers) {
 				texts.put(answer.getId(), answer);
 				results.put(answer.getId(), Integer.valueOf(0));
 				sequenceMap.put(answer.getSequence(), answer.getId());
 			}
-	
+
 			// find the number of responses (ItemGradingData) for each answer
-			iter = scores.iterator();
-			while (iter.hasNext()) {
-				ItemGradingData data = (ItemGradingData) iter.next();
-				
-				AnswerIfc answer = (AnswerIfc) publishedAnswerHash.get(data
-						.getPublishedAnswerId());
-	
+			for (ItemGradingData data: scores) {
+				AnswerIfc answer = publishedAnswerHash.get(data.getPublishedAnswerId());
 				if (answer != null) {
 					// found a response
-					Integer num = null;
-					// num is a counter
-					try {
-						// we found a response, now get existing count from the
-						// hashmap
-						num = (Integer) results.get(answer.getId());
-	
-					} catch (Exception e) {
+					Integer num = results.get(answer.getId());
+					if (num == null) {
 						log.warn("No results for " + answer.getId());
-						log.error(e.getMessage(), e);
-					}
-					if (num == null)
 						num = Integer.valueOf(0);
-	
+					}
+
 					// we found a response, and got the existing num , now update
 					// one
 					// check here for the other bug about non-autograded items
@@ -1606,90 +1591,60 @@ public class HistogramListener
 					// one submitted answer per student/assessment
 					if (answer.getIsCorrect() != null
 							&& answer.getIsCorrect().booleanValue()) {
-						qbean.addStudentWithAllCorrect(data.getAgentId()); 
+						qbean.addStudentWithAllCorrect(data.getAgentId());
 					}
-					qbean.addStudentResponded(data.getAgentId()); 
-	
+					qbean.addStudentResponded(data.getAgentId());
 				}
 			}
-			
+
 			HistogramBarBean[] bars = new HistogramBarBean[results.keySet().size()];
 			int[] numarray = new int[results.keySet().size()];
-			List sequenceList = new ArrayList();
-			
+
 			// get an arraylist of answer sequences
-			iter = answers.iterator();
-			while (iter.hasNext()) {
-				AnswerIfc answer = (AnswerIfc) iter.next();
-				sequenceList.add(answer.getSequence());
-			}
-	
+			List<Long> sequenceList = answers.stream().map(AnswerIfc::getSequence).collect(Collectors.toList());
+
 			// sort the sequences
 			Collections.sort(sequenceList);
-			iter = sequenceList.iterator();
-			// iter = results.keySet().iterator();
 			int i = 0;
 			int correctresponses = 0;
-	
+
 			// find answers sorted by sequence
-			while (iter.hasNext()) {
-				Long sequenceId = (Long) iter.next();
-				Long answerId = (Long) sequenceMap.get(sequenceId);
-				AnswerIfc answer = (AnswerIfc) texts.get(answerId);
+			for (Long sequenceId: sequenceList) {
+				Long answerId = sequenceMap.get(sequenceId);
+				AnswerIfc answer = texts.get(answerId);
 				
-				int num = ((Integer) results.get(answerId)).intValue();
+				int num = results.get(answerId).intValue();
 				// set i to be the sequence, so that the answer choices will be in
 				// the right order on Statistics page , see Bug SAM-440
 				i = answer.getSequence().intValue() - 1;
-	
+
 				numarray[i] = num;
 				bars[i] = new HistogramBarBean();
 				if (qbean.getQuestionType().equals("4")) { // true-false
-					String origText = answer.getText();
-					String text = "";
-					if ("true".equals(origText)) {
-						text = rb.getString("true_msg");
-					} else {
-						text = rb.getString("false_msg");
-					}
-					bars[i].setLabel(text);
+					bars[i].setLabel(Boolean.parseBoolean(answer.getText()) ? rb.getString("true_msg") : rb.getString("false_msg"));
 				} else {
 					bars[i].setLabel(answer.getText());
 				}
 				bars[i].setIsCorrect(answer.getIsCorrect());
-				if ((num > 1) || (num == 0)) {
-					bars[i].setNumStudentsText(num + " "
-							+ rb.getString("responses"));
-				} else {
-					bars[i]
-							.setNumStudentsText(num + " "
-									+ rb.getString("response"));
-	
-				}
+				bars[i].setNumStudentsText((num > 1 || num == 0) ? num + " " + rb.getString("responses") : num + " " + rb.getString("response"));
 				bars[i].setNumStudents(num);
-				if (answer.getIsCorrect() != null
-						&& answer.getIsCorrect().booleanValue()) {
+				if (answer.getIsCorrect() != null && answer.getIsCorrect().booleanValue()) {
 					correctresponses += num;
 				}
-				// i++;
 			}
+
 			// NEW
 			int[] heights = calColumnHeight(numarray, qbean.getNumResponses());
-			// int[] heights = calColumnHeight(numarray);
 			for (i = 0; i < bars.length; i++) {
-				try {
+				if (bars[i] != null) {
 					bars[i].setColumnHeight(Integer.toString(heights[i]));
-				}
-				catch (NullPointerException npe) {
-					log.warn("bars[" + i + "] is null. " + npe);
 				}
 			}
 			qbean.setHistogramBars(bars);
-			if (qbean.getNumResponses() > 0)
-				qbean
-						.setPercentCorrect(Integer
-								.toString((int) (((double) correctresponses / (double) qbean.getNumResponses()) * 100)));
-		
+			if (qbean.getNumResponses() > 0) {
+				qbean.setPercentCorrect(Integer
+					.toString((int) (((double) correctresponses / (double) qbean.getNumResponses()) * 100)));
+			}
 		}
 	}
 
